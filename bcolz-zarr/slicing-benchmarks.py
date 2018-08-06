@@ -1,5 +1,5 @@
 import bcolz
-# import matplotlib.pyplot as plt
+import numcodecs
 import numpy as np
 import os
 import s3fs
@@ -10,23 +10,28 @@ import tiledb
 import time
 import zarr
 
+# Configure compression settings
+tiledb_compressor = ('blosc-lz4', 5)
+zarr_compressor = numcodecs.Blosc(cname='lz4', clevel=5)
+bcolz.defaults.cparams['cname'] = 'lz4'
+bcolz.defaults.cparams['clevel'] = 5
+
 # Set up global variables/configs
-enable_s3 = False
+enable_s3 = True
 tiledb_array_name = 'tiledb_array'
 bcolz_array_name = 'bcolz_array'
 zarr_array_name = 'zarr_array'
 s3_bucket_name = 'tiledb-bench'
-bcolz.defaults.cparams['cname'] = 'blosclz'
-bcolz.defaults.cparams['clevel'] = 4
 bcolz.defaults.eval_vm = 'numexpr'
-config = tiledb.Config()
-config['sm.tile_cache_size'] = 100 * 1024 * 1024  # 100MB
+tiledb_config = tiledb.Config()
+tiledb_config['sm.tile_cache_size'] = 100 * 1024 * 1024  # 100MB
 
 if enable_s3:
     zarr_s3 = s3fs.S3FileSystem(key=os.environ['AWS_ACCESS_KEY_ID'],
                                 secret=os.environ['AWS_SECRET_ACCESS_KEY'])
     zarr_s3_store = s3fs.S3Map(root=s3_bucket_name + '/' + zarr_array_name,
                                s3=zarr_s3, check=False)
+
 
 def sync_fs():
     subprocess.call(['sudo', 'sync'])
@@ -55,6 +60,7 @@ def remove_arrays():
         if os.path.exists(zarr_array_name):
             shutil.rmtree(zarr_array_name)
 
+
 def create_tiledb_array(ctx, tile_extent, num_array_values):
     dims = []
     if isinstance(num_array_values, tuple):
@@ -68,7 +74,7 @@ def create_tiledb_array(ctx, tile_extent, num_array_values):
     tiledb_domain = tiledb.Domain(ctx, *dims)
     tiledb_schema = tiledb.ArraySchema(ctx, domain=tiledb_domain, sparse=False,
                                        attrs=[tiledb.Attr(ctx, name='a', dtype=np.float64,
-                                                          compressor=('blosc-lz', 4))])
+                                                          compressor=tiledb_compressor)])
     if enable_s3:
         array_path = 's3://{}/{}'.format(s3_bucket_name, tiledb_array_name)
     else:
@@ -95,7 +101,7 @@ def write_zarr_array(chunks, array_data):
         store = zarr_s3_store
     else:
         store = zarr_array_name
-    A = zarr.open(store, mode='w', shape=array_data.shape, chunks=chunks, dtype='f8')
+    A = zarr.open(store, mode='w', compressor=zarr_compressor, shape=array_data.shape, chunks=chunks, dtype=np.float64)
     A[:] = array_data
 
 
@@ -130,7 +136,7 @@ def bench_1d():
 
         if run_tiledb_tests:
             drop_fs_cache()
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             start = time.time()
             create_tiledb_array(ctx, t_ext, num_array_values)
             write_tiledb_array(ctx, array_data)
@@ -139,7 +145,7 @@ def bench_1d():
             array_stats[t_ext]['tiledb']['num_files'], array_stats[t_ext]['tiledb']['mb'] = dir_stats(tiledb_array_name)
 
             times = []
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             for i in range(0, num_trials):
                 drop_fs_cache()
                 ctx_to_use = ctx if use_tile_cache else tiledb.Ctx()
@@ -150,7 +156,7 @@ def bench_1d():
             timings[t_ext]['tiledb']['read_whole_array'] = np.median(times)
 
             times = []
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             for i in range(0, num_trials):
                 drop_fs_cache()
                 ctx_to_use = ctx if use_tile_cache else tiledb.Ctx()
@@ -236,7 +242,6 @@ def bench_2d():
     array_data = np.random.rand(*num_array_values)
     array_mb = array_data.nbytes / (1024 * 1024.0)
 
-    # tile_extents = [(100, 100), (1000, 1000), (5000, 2000)]
     tile_extents = [(1000, 1000), (5000, 2000)]
     num_trials = 5
     use_tile_cache = False
@@ -259,7 +264,7 @@ def bench_2d():
 
         if run_tiledb_tests:
             drop_fs_cache()
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             start = time.time()
             create_tiledb_array(ctx, t_ext, num_array_values)
             write_tiledb_array(ctx, array_data)
@@ -268,9 +273,10 @@ def bench_2d():
             array_stats[t_ext]['tiledb']['num_files'], array_stats[t_ext]['tiledb']['mb'] = dir_stats(tiledb_array_name)
 
             times = []
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 ctx_to_use = ctx if use_tile_cache else tiledb.Ctx()
                 start = time.time()
@@ -280,9 +286,10 @@ def bench_2d():
             timings[t_ext]['tiledb']['read_whole_array'] = np.median(times)
 
             times = []
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 ctx_to_use = ctx if use_tile_cache else tiledb.Ctx()
                 start = time.time()
@@ -292,9 +299,10 @@ def bench_2d():
             timings[t_ext]['tiledb']['read_1_cell'] = np.median(times)
 
             times = []
-            ctx = tiledb.Ctx(config)
+            ctx = tiledb.Ctx(tiledb_config)
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 ctx_to_use = ctx if use_tile_cache else tiledb.Ctx()
                 start = time.time()
@@ -360,7 +368,8 @@ def bench_2d():
 
             times = []
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 start = time.time()
                 A = zarr.open(zarr_store, mode='r')
@@ -370,7 +379,8 @@ def bench_2d():
 
             times = []
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 start = time.time()
                 A = zarr.open(zarr_store, mode='r')
@@ -380,7 +390,8 @@ def bench_2d():
 
             times = []
             for i in range(0, num_trials):
-                print('.', end='') ; sys.stdout.flush()
+                print('.', end='')
+                sys.stdout.flush()
                 drop_fs_cache()
                 start = time.time()
                 A = zarr.open(zarr_store, mode='r')
