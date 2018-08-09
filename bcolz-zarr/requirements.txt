@@ -6,6 +6,7 @@ boto3==1.7.70
 botocore==1.10.70
 cmake==3.12.0
 cycler==0.10.0
+dask==0.18.2
 decorator==4.3.0
 docutils==0.14
 entrypoints==0.2.3
@@ -56,6 +57,7 @@ simplegeneric==0.8.1
 six==1.11.0
 terminado==0.8.1
 testpath==0.3.1
+toolz==0.9.0
 tornado==5.1
 traitlets==4.3.2
 wcwidth==0.1.7
